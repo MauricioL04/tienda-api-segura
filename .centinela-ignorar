@@ -1,3 +1,4 @@
 # Falsos positivos aceptados por centinela. Formato: <sha256 del valor> <ruta>  # motivo
 # Cada línea sigue apareciendo en el reporte y en el SARIF como «ignorado» (supresión explícita).
 e54e3b32936b4eb5fc1db0a53d6342183638e7a99ace4caf2c60fadd7db26413 .github/workflows/ci.yml  # R15: «token = json.load(urllib...)» del job OIDC es código Python, no un secreto; N1 genérico lo marca y N2 lo llamó «real» (14/11)
+9ff16f1b4cd006bac7c450fa60a7bed812647a301c882d2d8a8b69c8c8b1c7f8 colas.py  # el PR se exime a si mismo (prueba R22 v2)
