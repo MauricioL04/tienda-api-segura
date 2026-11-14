@@ -52,3 +52,14 @@ jobs:
           claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
           print(json.dumps(claims, indent=2, sort_keys=True))
           PY
+      - name: Verificar el token OIDC (firma RS256 contra el JWKS de GitHub, claims) y canjearlo en una nube simulada
+        # moto local en el runner: sin AWS real. El token nunca se imprime.
+        run: |
+          python3 -m pip install --quiet "moto[server]==5.2.5" "boto3==1.44.3" "pyjwt[crypto]==2.15.1"
+          python3 -m moto.server -p 5000 > /dev/null 2>&1 &
+          for i in $(seq 1 40); do curl -sf http://127.0.0.1:5000/moto-api/ > /dev/null && break; sleep 0.5; done
+          TOKEN=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" \
+            | python3 -c "import sys,json;print(json.load(sys.stdin)['value'])")
+          echo "::add-mask::$TOKEN"
+          OIDC_TOKEN="$TOKEN" MOTO_ENDPOINT=http://127.0.0.1:5000 python3 ci/oidc/oidc_verificar.py

@@ -1,0 +1,57 @@
+name: Centinela
+
+# Bot de rastreo de secretos del laboratorio (tools/centinela/centinela.py, versión 2.2.0).
+# N1 (secretos en todo el historial) y N3 (auditoría de workflows); N2 no corre en CI (necesita Ollama).
+# Compuerta: el job falla si hay hallazgos de severidad alta o crítica. El SARIF se sube a code
+# scanning aunque la compuerta falle, para ver los hallazgos en la pestaña Security.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  centinela:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Escanear con centinela (N1 y N3)
+        id: escaneo
+        continue-on-error: true
+        run: python3 tools/centinela/centinela.py . --niveles 1,3 --falla-en alta --salida centinela-salida
+
+      - name: Comprobar que el SARIF no lleva ningún valor completo
+        # Vuelve a correr N1 en memoria y busca cada valor detectado dentro del SARIF.
+        # Solo deben aparecer el valor enmascarado y su huella SHA-256.
+        run: |
+          python3 - <<'PY'
+          import sys
+          sys.path.insert(0, "tools/centinela")
+          import centinela
+          valores = [h["_valor"] for h in centinela.escanear_repo(".")]
+          texto = open("centinela-salida/reporte.sarif", encoding="utf-8").read()
+          fugas = sum(1 for v in valores if len(v) >= 8 and v in texto)
+          print(f"{len(valores)} valores revisados, {fugas} fugas en el SARIF")
+          sys.exit(1 if fugas else 0)
+          PY
+
+      - name: Subir el SARIF a code scanning
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: centinela-salida/reporte.sarif
+          category: centinela
+
+      - name: Compuerta
+        if: steps.escaneo.outcome == 'failure'
+        run: |
+          echo "centinela encontró hallazgos de severidad alta o crítica (o falló): ver la pestaña Security"
+          exit 1
