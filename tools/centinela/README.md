@@ -1,13 +1,13 @@
 # centinela (copia para CI)
 
 - **Origen:** `lab/bot/centinela.py` del repositorio del curso (Grupo 6, Ciberseguridad 2026-2).
-- **Versión:** 2.2.1
-- **SHA-256 de `centinela.py`:** `8ff7861a739efec7f1a686cd5ccea593e8fdd7e8109ce75ed75a404dcc3ce51c`
+- **Versión:** 2.2.2
+- **SHA-256 de `centinela.py`:** `e824efb98656d85fefd508658d6cc027c7a2dd4fa795b71ea4c02a834ebba4b0` (con finales de línea LF, como queda en el repo)
 - **Licencia:** el repositorio de origen no declara una licencia; es código académico del Grupo 6.
 - **Dependencias:** ninguna; solo la biblioteca estándar de Python 3.
 
 Lo usa `.github/workflows/centinela.yml`: niveles 1 (secretos en el historial) y 3 (workflows),
-compuerta con `--falla-en alta` (exit 0 sin hallazgos altos, 1 con hallazgos, 2 por error; solo `.centinela-ignorar` exime, N2 nunca) y subida
+compuerta con `--falla-en alta` (exit 0 sin hallazgos altos, 1 con hallazgos, 2 por error de git, clon superficial o fallo interno; solo `.centinela-ignorar` exime, N2 nunca) y subida
 del SARIF a code scanning.
 
 ## Qué publica el SARIF
@@ -29,3 +29,16 @@ apareciendo en el reporte y en el SARIF como suprimidos; no se esconden.
 
 Los commits huérfanos (`--huerfanos`) solo se ven en un clon que los conserve; el clon nuevo del CI
 no los tiene.
+
+## Pull requests (R22)
+
+En un `pull_request`, el workflow toma `tools/centinela/centinela.py` y `.centinela-ignorar` de la
+rama **base** (`git show origin/<rama base>:ruta`); el nombre de la rama llega por `env:`, sin
+interpolarse dentro de `run:`. Así, un PR no puede agregar la huella de su propio secreto a
+`.centinela-ignorar` ni traer un bot modificado.
+
+**Riesgo residual:** en `pull_request`, GitHub ejecuta el workflow tal como viene en el PR. Un PR que
+edite `.github/workflows/centinela.yml` puede quitar ese paso. Solo lo frena una revisión humana de
+`.github/`, `tools/` y `.centinela-ignorar` (CODEOWNERS más aprobaciones obligatorias). El ruleset
+de `main` pide 0 aprobaciones porque el repositorio tiene un solo dueño, así que, en la práctica,
+el dueño puede cambiar la compuerta con un PR propio.

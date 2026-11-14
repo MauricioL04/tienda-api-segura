@@ -1,9 +1,17 @@
 name: Centinela
 
-# Bot de rastreo de secretos del laboratorio (tools/centinela/centinela.py, versión 2.2.1).
+# Bot de rastreo de secretos del laboratorio (tools/centinela/centinela.py, versión 2.2.2).
 # N1 (secretos en todo el historial) y N3 (auditoría de workflows); N2 no corre en CI (necesita Ollama).
-# Compuerta: el job falla si hay hallazgos de severidad alta o crítica. El SARIF se sube a code
-# scanning aunque la compuerta falle, para ver los hallazgos en la pestaña Security.
+# Compuerta: el job falla si hay hallazgos de severidad alta o crítica, o si el bot falla (exit 2).
+# El SARIF se sube a code scanning aunque la compuerta falle, para ver los hallazgos en Security.
+#
+# R22, PR que se aprueba a sí mismo: en un pull_request, el bot y .centinela-ignorar se toman de la
+# rama BASE, no del PR. Así, un PR no puede agregar la huella de su propio secreto a
+# .centinela-ignorar ni cambiar el bot para que lo deje pasar.
+# Riesgo residual: en pull_request, GitHub ejecuta ESTE archivo tal como viene en el PR, así que un
+# PR que edite este workflow puede quitar el paso. Solo lo frena la revisión humana de .github/,
+# tools/ y .centinela-ignorar, y el ruleset de main pide 0 aprobaciones porque el repo tiene un solo
+# dueño: en la práctica, el dueño puede cambiar la compuerta con un PR propio.
 
 on:
   push:
@@ -21,21 +29,35 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          fetch-depth: 0 # historial completo: con un clon superficial el bot sale con 2
           persist-credentials: false
+
+      - name: En un PR, usar el bot y las exclusiones de la rama base
+        if: github.event_name == 'pull_request'
+        env:
+          RAMA_BASE: ${{ github.base_ref }} # dato del evento: por env, nunca interpolado en run
+        run: |
+          git show "origin/${RAMA_BASE}:tools/centinela/centinela.py" > "$RUNNER_TEMP/centinela.py"
+          if git show "origin/${RAMA_BASE}:.centinela-ignorar" > "$RUNNER_TEMP/ignorar" 2>/dev/null; then
+            cp "$RUNNER_TEMP/ignorar" .centinela-ignorar
+          else
+            rm -f .centinela-ignorar
+          fi
+          echo "BOT=$RUNNER_TEMP/centinela.py" >> "$GITHUB_ENV"
+          echo "Bot y exclusiones tomados de origin/${RAMA_BASE}"
 
       - name: Escanear con centinela (N1 y N3)
         id: escaneo
         continue-on-error: true
-        run: python3 tools/centinela/centinela.py . --niveles 1,3 --falla-en alta --salida centinela-salida
+        run: python3 "${BOT:-tools/centinela/centinela.py}" . --niveles 1,3 --falla-en alta --salida centinela-salida
 
       - name: Comprobar que el SARIF no lleva ningún valor completo
         # Vuelve a correr N1 en memoria y busca cada valor detectado dentro del SARIF.
         # Solo deben aparecer el valor enmascarado y su huella SHA-256.
         run: |
           python3 - <<'PY'
-          import sys
-          sys.path.insert(0, "tools/centinela")
+          import os, sys
+          sys.path.insert(0, os.path.dirname(os.environ.get("BOT", "tools/centinela/centinela.py")))
           import centinela
           valores = [h["_valor"] for h in centinela.escanear_repo(".")]
           texto = open("centinela-salida/reporte.sarif", encoding="utf-8").read()
