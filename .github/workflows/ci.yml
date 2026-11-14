@@ -34,6 +34,7 @@ jobs:
 
   oidc:
     # CI sin secretos: el job pide un token OIDC de corta vida en vez de usar claves guardadas
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
