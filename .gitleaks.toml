@@ -1,0 +1,14 @@
+# Configuracion de gitleaks: reglas por defecto + reglas propias del proyecto
+title = "tienda-api-segura"
+
+[extend]
+useDefault = true
+
+# La configuracion por defecto (8.30.1) no detecta cadenas de conexion con
+# contrasena embebida; push protection tampoco las bloquea.
+[[rules]]
+id = "url-bd-con-contrasena"
+description = "URL de base de datos con contrasena embebida (postgres, mysql, mongodb)"
+regex = '''(?i)\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?)://[^:/\s'"@]+:([^@\s'"/]{3,})@[^\s'"]+'''
+secretGroup = 1
+keywords = ["postgres", "mysql", "mariadb", "mongodb"]

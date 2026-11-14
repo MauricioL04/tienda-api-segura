@@ -19,6 +19,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_ENABLE_COMMENTS: false
+          GITLEAKS_CONFIG: .gitleaks.toml
 
   pruebas:
     runs-on: ubuntu-latest
@@ -30,3 +31,23 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m py_compile app.py
+
+  oidc:
+    # CI sin secretos: el job pide un token OIDC de corta vida en vez de usar claves guardadas
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Pedir el token OIDC y mostrar solo los claims del payload
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, urllib.request
+          url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"] + "&audience=sts.amazonaws.com"
+          req = urllib.request.Request(url, headers={"Authorization": "bearer " + os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]})
+          token = json.load(urllib.request.urlopen(req))["value"]
+          # Solo el payload (parte 2 del JWT); el token completo y la firma nunca se imprimen
+          payload = token.split(".")[1]
+          claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+          print(json.dumps(claims, indent=2, sort_keys=True))
+          PY
