@@ -52,7 +52,7 @@ def asumir_rol(endpoint, token, rol=ROL):
 def _segundos_para(expiracion):
     """Segundos hasta una fecha (datetime con tz que devuelve moto)."""
     import datetime
-    return int((expiracion - datetime.datetime.now(datetime.timezone.utc)).total_seconds())
+    return int((expiracion - datetime.datetime.now(datetime.UTC)).total_seconds())
 
 
 def main(argv=None):
@@ -125,7 +125,7 @@ def demo():
 def _falla(fn, que):
     try:
         fn()
-    except Exception:
+    except jwt.PyJWTError:  # cada caso negativo debe fallar con un error de jwt
         return
     raise AssertionError(f"debía fallar por {que} y no falló")
 
