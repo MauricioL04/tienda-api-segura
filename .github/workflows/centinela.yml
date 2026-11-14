@@ -14,7 +14,10 @@ name: Centinela
 # dueño: en la práctica, el dueño puede cambiar la compuerta con un PR propio.
 
 on:
+  # push solo en main: en una rama de PR, el run de push usaría el .centinela-ignorar del propio PR
+  # y aparecería como un check «centinela» en verde junto al del pull_request (revisor T2, vuelta 2)
   push:
+    branches: [main]
   pull_request:
 
 permissions:
