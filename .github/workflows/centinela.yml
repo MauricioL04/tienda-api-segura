@@ -1,6 +1,6 @@
 name: Centinela
 
-# Bot de rastreo de secretos del laboratorio (tools/centinela/centinela.py, versión 2.2.0).
+# Bot de rastreo de secretos del laboratorio (tools/centinela/centinela.py, versión 2.2.1).
 # N1 (secretos en todo el historial) y N3 (auditoría de workflows); N2 no corre en CI (necesita Ollama).
 # Compuerta: el job falla si hay hallazgos de severidad alta o crítica. El SARIF se sube a code
 # scanning aunque la compuerta falle, para ver los hallazgos en la pestaña Security.

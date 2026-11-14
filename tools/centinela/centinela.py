@@ -6,7 +6,9 @@ Uso:
 
 Códigos de salida (sirve de compuerta en CI):
     0  sin hallazgos de severidad >= --falla-en (por defecto «alta»)
-    1  hay al menos uno (no cuentan los ignorados ni los que N2 marca «ejemplo» o «prueba»)
+    1  hay al menos uno. Cuenta todo hallazgo de N1 y N3; solo se excluyen los de
+       .centinela-ignorar (decisión humana con huella y motivo). N2 anota y prioriza el
+       reporte, pero nunca exime: un LLM no determinista no abre una compuerta de seguridad.
     2  error (ruta inexistente, fallo interno o un valor sin enmascarar en los reportes)
 
 N1  regex de proveedores + detector genérico clave=valor con entropía de Shannon,
@@ -36,7 +38,7 @@ import time
 import urllib.error
 import urllib.request
 
-VERSION = "2.2.0"
+VERSION = "2.2.1"
 UMBRAL_ENTROPIA = 3.5  # bits por carácter; por debajo, el valor genérico se descarta
 UMBRAL_LIMITROFE = 4.2  # v2: un genérico por debajo de esto es ambiguo y lo revisa N2
 USAR_LISTA_CONOCIDOS = True  # v2; en False reproduce el N1 de la v1
@@ -512,7 +514,7 @@ def _correr(a):
     escribir_reportes(a.salida, a.repo, secretos, workflows, niveles, ignorados)
 
     umbral = ORDEN_SEVERIDAD[a.falla_en]
-    cuentan = [h for h in secretos if h.get("n2") not in ("ejemplo", "prueba")] + workflows
+    cuentan = secretos + workflows  # los ignorados ya salieron; N2 no exime (falla cerrada)
     falla = any(ORDEN_SEVERIDAD[h["severidad"]] >= umbral for h in cuentan)
     print(f"Centinela {VERSION}: {len(secretos)} secretos, {len(ignorados)} ignorados, "
           f"{len(workflows)} hallazgos de workflows -> {a.salida}")
