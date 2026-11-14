@@ -9,7 +9,9 @@ Códigos de salida (sirve de compuerta en CI):
     1  hay al menos uno. Cuenta todo hallazgo de N1 y N3; solo se excluyen los de
        .centinela-ignorar (decisión humana con huella y motivo). N2 anota y prioriza el
        reporte, pero nunca exime: un LLM no determinista no abre una compuerta de seguridad.
-    2  error (ruta inexistente, fallo interno o un valor sin enmascarar en los reportes)
+    2  error: ruta inexistente, fallo de git (objeto dañado, «dubious ownership»), clon
+       superficial (historial incompleto), fallo interno o un valor sin enmascarar en los
+       reportes. Un error nunca se presenta como «sin hallazgos» (falla cerrada).
 
 N1  regex de proveedores + detector genérico clave=valor con entropía de Shannon,
     sobre el historial de git: todas las ramas (también archivos borrados) y, con
@@ -38,7 +40,7 @@ import time
 import urllib.error
 import urllib.request
 
-VERSION = "2.2.1"
+VERSION = "2.2.2"
 UMBRAL_ENTROPIA = 3.5  # bits por carácter; por debajo, el valor genérico se descarta
 UMBRAL_LIMITROFE = 4.2  # v2: un genérico por debajo de esto es ambiguo y lo revisa N2
 USAR_LISTA_CONOCIDOS = True  # v2; en False reproduce el N1 de la v1
@@ -52,7 +54,8 @@ CONOCIDOS_SHA256 = {
 }
 MARCADORES_EXACTOS = {"password", "secret", "123456", "12345678", "admin"}
 MARCADORES_PARCIALES = ("example", "changeme", "your_", "your-", "yourkey", "xxxx", "<", ">", "${",
-                        "{{", "placeholder", "dummy", "fake", "sample", "test", "redacted", "...")
+                        "{{", "placeholder", "dummy", "fake", "sample", "test", "redacted", "...",
+                        "****")  # «****» y «...»: máscaras del propio bot o del forense
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODELO = os.environ.get("CENTINELA_MODELO", "qwen2.5:1.5b")
 
@@ -162,13 +165,19 @@ def enmascarar_linea(linea):
 
 def enmascarar_lineas(lineas):
     """Enmascara un archivo completo: secretos de N1, todo lo que está dentro de un bloque
-    -----BEGIN … -----END (cuerpos PEM) y las líneas que son un solo token base64/hex largo."""
+    -----BEGIN … -----END (cuerpos PEM) y las líneas que son un solo token base64/hex largo.
+    Además, cada valor que N1 detecta en el archivo se reemplaza en todas sus apariciones
+    (la misma clave repetida en otra columna o en una línea vecina sin palabra clave)."""
+    valores = sorted({c[4] for x in lineas for c in _coincidencias(x) if len(c[4]) >= 4}, key=len, reverse=True)
     salida, en_bloque = [], False
     for x in lineas:
         if en_bloque or TOKEN_SOLO.fullmatch(x.strip()):
             salida.append(f"[{len(x.strip())} car. enmascarados]")
         else:
-            salida.append(enmascarar_linea(x))
+            segura = x[:MAX_LINEA]
+            for v in valores:
+                segura = segura.replace(v, enmascarar(v))
+            salida.append(enmascarar_linea(segura))
         if "-----BEGIN " in x:
             en_bloque = True
         if "-----END " in x:
@@ -214,16 +223,23 @@ def escanear_directorio(carpeta):
     return hallazgos
 
 
-def _git(repo, *args, entrada=None):
+def _git(repo, *args, entrada=None, obligatorio=False):
+    """Corre git. Si falla y la llamada es obligatoria (log, fsck, rev-list, rev-parse), lanza
+    una excepción: el bot sale con 2 en vez de leer «sin salida» como «sin hallazgos»."""
     r = subprocess.run(["git", "-C", repo, "-c", "core.quotePath=false", *args],
                        input=entrada.encode() if entrada else None, capture_output=True, check=False)
-    return r.stdout.decode("utf-8", "replace") if r.returncode == 0 else None
+    if r.returncode == 0:
+        return r.stdout.decode("utf-8", "replace")
+    if obligatorio:
+        error = r.stderr.decode("utf-8", "replace").strip().splitlines()
+        raise RuntimeError(f"git {args[0]} falló (código {r.returncode}): {(error or [''])[0][:200]}")
+    return None
 
 
 def commits_huerfanos(repo):
     """Commits que el clon guarda pero ninguna rama ni etiqueta alcanza (git fsck sin reflogs:
     incluye los que solo viven en el reflog, como el commit reescrito por un force-push)."""
-    salida = _git(repo, "fsck", "--unreachable", "--no-reflogs", "--no-progress") or ""
+    salida = _git(repo, "fsck", "--unreachable", "--no-reflogs", "--no-progress", obligatorio=True)
     return [linea.split()[2] for linea in salida.splitlines() if linea.startswith("unreachable commit ")]
 
 
@@ -234,16 +250,20 @@ def escanear_repo(repo, huerfanos=True):
     Un secreto que sigue en HEAD también se agregó en algún commit, así que el
     historial cubre el árbol actual; luego se marca si sigue en HEAD o no.
     """
+    # Un clon superficial esconde historial: escanear solo una parte y aprobar sería falla abierta.
+    if _git(repo, "rev-parse", "--is-shallow-repository", obligatorio=True).strip() == "true":
+        raise RuntimeError("clon superficial: el historial está incompleto (usa fetch-depth: 0 "
+                           "o git fetch --unshallow)")
     extra = commits_huerfanos(repo) if huerfanos else []
     diff = _git(repo, "log", "-p", "--all", *(["--stdin"] if extra else []), "--reverse", "--no-color",
                 "--no-ext-diff", "--no-textconv", "--unified=0", "--format=COMMIT %H",
-                entrada="\n".join(extra) + "\n" if extra else None)
-    alcanzables = set((_git(repo, "rev-list", "--all") or "").split())
+                entrada="\n".join(extra) + "\n" if extra else None, obligatorio=True)
+    alcanzables = set(_git(repo, "rev-list", "--all", obligatorio=True).split())
     hallazgos, vistos = [], set()
     commit = ruta = None
     num = 0
     cabecera = False  # entre «diff --git» y el primer «@@»; una línea agregada «++ x» no es cabecera
-    for linea in (diff or "").splitlines():
+    for linea in diff.splitlines():
         if linea.startswith("COMMIT "):
             commit = linea[7:]
         elif linea.startswith("diff --git "):
@@ -491,7 +511,11 @@ def _correr(a):
     if not os.path.isdir(a.repo):
         raise FileNotFoundError(f"no existe la carpeta {a.repo}")
     niveles = sorted(int(n) for n in a.niveles.split(","))
-    es_git = _git(a.repo, "rev-parse", "--is-inside-work-tree") is not None
+    # Modo repo solo si la carpeta es la raíz de un repo (tiene .git). Una subcarpeta se escanea
+    # como carpeta. Si hay .git pero git no lo puede leer, es un error, no el modo carpeta.
+    es_git = os.path.exists(os.path.join(a.repo, ".git"))
+    if es_git:
+        _git(a.repo, "rev-parse", "--is-inside-work-tree", obligatorio=True)
 
     secretos = []
     if 1 in niveles:
